@@ -25,6 +25,13 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Employee Work Tree API", version="0.1.0", lifespan=lifespan)
     register_error_handlers(app)
     app.include_router(api_router)
+
+    # Healthcheck para Railway: responde 200 si el proceso está vivo. No toca la base de
+    # datos a propósito, para que un fallo momentáneo de la DB no reinicie la app.
+    @app.get("/health", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     return app
 
 

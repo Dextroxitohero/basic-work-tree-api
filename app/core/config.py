@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,19 @@ class Settings(BaseSettings):
 
     # extra="ignore": el .env puede tener variables que la app no usa (DATABASE_URL_TEST).
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("database_url")
+    @classmethod
+    def use_asyncpg_driver(cls, value: str) -> str:
+        """Railway (y Heroku) entregan la URL como postgres:// o postgresql://.
+
+        SQLAlchemy async necesita el driver en el esquema (postgresql+asyncpg://), así que
+        lo añadimos aquí. Si la URL ya lo trae (desarrollo local), no se toca.
+        """
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+asyncpg://" + value.removeprefix(prefix)
+        return value
 
     @model_validator(mode="after")
     def local_mode_requires_secret(self) -> Self:
