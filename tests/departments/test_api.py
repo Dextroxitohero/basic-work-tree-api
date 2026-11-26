@@ -1,19 +1,23 @@
 from uuid import uuid4
 
 
-async def test_detail_lists_only_active_employees(client, create_employee):
+async def test_detail_has_employee_count_of_active_employees_only(client, create_employee):
     boss = await create_employee()
     department = (
         await client.post("/departments", json={"name": "IT", "manager_id": boss["id"]})
     ).json()
-    active = await create_employee(department_id=department["id"])
+    await create_employee(department_id=department["id"])
     inactive = await create_employee(department_id=department["id"])
     await client.delete(f"/employees/{inactive['id']}")
 
     detail = (await client.get(f"/departments/{department['id']}")).json()
+    listed = (await client.get("/departments")).json()["items"]
 
+    assert department["employee_count"] == 0  # la respuesta del POST también lo incluye
     assert detail["manager_id"] == boss["id"]
-    assert [e["id"] for e in detail["employees"]] == [active["id"]]
+    assert detail["employee_count"] == 1
+    assert "employees" not in detail
+    assert listed == [detail]
 
 
 async def test_update_and_list(client):
@@ -22,7 +26,9 @@ async def test_update_and_list(client):
     renamed = await client.patch(f"/departments/{department['id']}", json={"name": "Tech"})
 
     assert renamed.status_code == 200
-    assert [d["name"] for d in (await client.get("/departments")).json()] == ["Tech"]
+    assert renamed.json()["employee_count"] == 0
+    listed = (await client.get("/departments")).json()["items"]
+    assert [d["name"] for d in listed] == ["Tech"]
 
 
 async def test_duplicated_name(client):

@@ -1,15 +1,9 @@
-from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import ForeignKey, Index, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.models import Base, CreatedAtMixin, UUIDMixin
-
-# SQLAlchemy resuelve "Employee" por su registro interno en runtime, así que este import
-# solo lo necesita el editor / type checker. Evita el import circular.
-if TYPE_CHECKING:
-    from app.modules.employees.models import Employee
 
 
 class Department(UUIDMixin, CreatedAtMixin, Base):
@@ -22,11 +16,9 @@ class Department(UUIDMixin, CreatedAtMixin, Base):
         ForeignKey("employees.id", use_alter=True), index=True
     )
 
-    # lazy="raise": si alguien olvida cargar la relación, falla con un error claro en lugar
-    # de lanzar un query oculto (problema N+1, y además no permitido en async).
-    employees: Mapped[list["Employee"]] = relationship(
-        primaryjoin="and_(Department.id == foreign(Employee.department_id), Employee.is_active)",
-        order_by="Employee.last_name, Employee.first_name",
-        viewonly=True,
-        lazy="raise",
-    )
+    # Índice (columna, id) para ordenar y paginar por cursor. El nombre ya tiene su propio
+    # índice único, así que solo hace falta el de created_at.
+    __table_args__ = (Index("ix_departments_created_at_id", "created_at", "id"),)
+
+    # employee_count NO es una columna: el repositorio lo calcula en cada consulta y lo deja
+    # como atributo del objeto (ver DepartmentRepository).

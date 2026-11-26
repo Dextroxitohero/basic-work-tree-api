@@ -64,7 +64,7 @@ async def test_retrying_create_conflicts_and_resource_can_be_recovered(client, c
 
     assert retry.status_code == 409
     assert retry.json()["error"] == "email_already_exists"
-    assert [e["id"] for e in found.json()] == [employee["id"]]
+    assert [e["id"] for e in found.json()["items"]] == [employee["id"]]
 
 
 async def test_unknown_employee_is_404(client):
@@ -198,9 +198,9 @@ async def test_deactivation_releases_responsibilities(
     assert detail["position_history"][0]["end_date"] == date.today().isoformat()
     assert (await client.get(f"/employees/{report['id']}")).json()["manager_id"] is None
     assert (await client.get(f"/departments/{department['id']}")).json()["manager_id"] is None
-    active_ids = [e["id"] for e in (await client.get("/employees")).json()]
-    inactive = (await client.get("/employees", params={"is_active": False})).json()
-    assert boss["id"] not in active_ids
+    active = (await client.get("/employees", params={"is_active": True})).json()["items"]
+    inactive = (await client.get("/employees", params={"is_active": False})).json()["items"]
+    assert boss["id"] not in [e["id"] for e in active]
     assert [e["id"] for e in inactive] == [boss["id"]]
 
 

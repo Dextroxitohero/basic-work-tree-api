@@ -12,8 +12,9 @@ from app.core.exceptions import (
     ConflictError,
     DomainError,
     ForbiddenError,
+    InvalidInputError,
     NotFoundError,
-    ServiceUnavailableError,
+    TooManyRequestsError,
     UnauthenticatedError,
 )
 from app.core.schemas import ErrorResponse
@@ -23,9 +24,10 @@ logger = logging.getLogger(__name__)
 _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     NotFoundError: status.HTTP_404_NOT_FOUND,
     ConflictError: status.HTTP_409_CONFLICT,
+    InvalidInputError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnauthenticatedError: status.HTTP_401_UNAUTHORIZED,
     ForbiddenError: status.HTTP_403_FORBIDDEN,
-    ServiceUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    TooManyRequestsError: status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 
@@ -42,6 +44,8 @@ async def handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
     )
     # El estándar HTTP exige este header en las respuestas 401.
     headers = {"WWW-Authenticate": "Bearer"} if status_code == 401 else None
+    if isinstance(exc, TooManyRequestsError):
+        headers = {"Retry-After": str(exc.retry_after)}  # cuántos segundos esperar
     return _response(
         status_code,
         ErrorResponse(error=exc.code, message=exc.message, details=exc.details),

@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
+from app.core.pagination import Order, Page
 from app.modules.employees.directory import EmployeeDirectory
 from app.modules.employees.exceptions import CircularManagerReferenceError, EmployeeNotFoundError
 from app.modules.employees.models import Employee
@@ -31,8 +32,32 @@ class EmployeeService:
         self._positions = positions
         self._departments = departments
 
-    async def list_all(self, *, is_active: bool, email: str | None) -> Sequence[Employee]:
-        return await self._employees.list_all(is_active=is_active, email=email)
+    async def list_page(
+        self,
+        *,
+        is_active: bool | None,
+        email: str | None,
+        q: str | None,
+        department_id: UUID | None,
+        manager_id: UUID | None,
+        has_manager: bool | None,
+        job_title_id: UUID | None,
+        sort: str,
+        order: Order,
+        after: str | None,
+    ) -> Page[Employee]:
+        return await self._employees.list_page(
+            is_active=is_active,
+            email=email,
+            q=q,
+            department_id=department_id,
+            manager_id=manager_id,
+            has_manager=has_manager,
+            job_title_id=job_title_id,
+            sort=sort,
+            order=order,
+            after=after,
+        )
 
     async def get_detail(self, employee_id: UUID) -> Employee:
         employee = await self._employees.get_detail(employee_id)

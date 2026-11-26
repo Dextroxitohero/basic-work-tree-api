@@ -2,7 +2,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, true
+from sqlalchemy import ForeignKey, Index, String, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.models import Base, CreatedAtMixin, UpdatedAtMixin, UUIDMixin
@@ -23,6 +23,14 @@ class Employee(UUIDMixin, CreatedAtMixin, UpdatedAtMixin, Base):
     # Auto-referencia: el jefe es otro empleado. Así se forma el árbol.
     manager_id: Mapped[UUID | None] = mapped_column(ForeignKey("employees.id"), index=True)
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id"), index=True)
+
+    # Índices (columna, id) para ordenar y paginar por cursor sin ordenar en memoria.
+    __table_args__ = (
+        Index("ix_employees_last_name_id", "last_name", "id"),
+        Index("ix_employees_first_name_id", "first_name", "id"),
+        Index("ix_employees_hire_date_id", "hire_date", "id"),
+        Index("ix_employees_created_at_id", "created_at", "id"),
+    )
 
     # Las relaciones son viewonly (solo lectura): las escrituras pasan siempre por las columnas
     # *_id y los repositorios, así hay una sola forma de modificar los datos.

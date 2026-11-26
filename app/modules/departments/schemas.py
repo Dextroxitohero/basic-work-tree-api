@@ -3,7 +3,6 @@ from typing import Annotated, ClassVar
 from uuid import UUID
 
 from app.core.schemas import InputModel, OutputModel, PatchModel, text_field
-from app.modules.employees.schemas import EmployeeResponse
 
 DepartmentName = Annotated[str, text_field(100)]
 
@@ -24,8 +23,5 @@ class DepartmentResponse(OutputModel):
     id: UUID
     name: str
     manager_id: UUID | None
+    employee_count: int  # empleados ACTIVOS del departamento
     created_at: datetime
-
-
-class DepartmentDetail(DepartmentResponse):
-    employees: list[EmployeeResponse]

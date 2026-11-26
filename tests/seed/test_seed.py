@@ -12,14 +12,14 @@ def count_nodes(node: dict) -> int:
     return 1 + sum(count_nodes(child) for child in node["reports"])
 
 
-async def test_seed_creates_20_employees_with_different_positions(client):
+async def test_seed_creates_20_employees_with_different_positions(client, get_all):
     assert await run_seed() == 20
 
-    employees = (await client.get("/employees")).json()
+    employees = await get_all("/employees")
     titles = {e["current_position"]["job_title"]["name"] for e in employees}
     roots = [e for e in employees if e["manager_id"] is None]
     tree = (await client.get(f"/employees/{roots[0]['id']}/tree")).json()
-    departments = (await client.get("/departments")).json()
+    departments = await get_all("/departments")
 
     assert len(employees) == 20
     assert len(titles) == 20
@@ -29,11 +29,9 @@ async def test_seed_creates_20_employees_with_different_positions(client):
     assert all(d["manager_id"] for d in departments)
 
 
-async def test_seed_history_is_consistent(client):
+async def test_seed_history_is_consistent(client, get_all):
     await run_seed()
-    employee = (
-        await client.get("/employees", params={"email": "andres.molina@example.com"})
-    ).json()
+    employee = await get_all("/employees", email="andres.molina@example.com")
 
     history = (await client.get(f"/employees/{employee[0]['id']}/positions")).json()
 
@@ -45,11 +43,9 @@ async def test_seed_history_is_consistent(client):
     assert employee[0]["hire_date"] == "2013-01-14"
 
 
-async def test_seed_is_idempotent_and_keeps_changes(client):
+async def test_seed_is_idempotent_and_keeps_changes(client, get_all):
     await run_seed()
-    employee = (await client.get("/employees", params={"email": "ivan.romero@example.com"})).json()[
-        0
-    ]
+    employee = (await get_all("/employees", email="ivan.romero@example.com"))[0]
     await client.patch(f"/employees/{employee['id']}", json={"phone": "555"})
     await client.delete(f"/employees/{employee['id']}")
 
@@ -57,4 +53,4 @@ async def test_seed_is_idempotent_and_keeps_changes(client):
 
     after = (await client.get(f"/employees/{employee['id']}")).json()
     assert (after["phone"], after["is_active"]) == ("555", False)
-    assert len((await client.get("/employees")).json()) == 19
+    assert len(await get_all("/employees", is_active=True)) == 19

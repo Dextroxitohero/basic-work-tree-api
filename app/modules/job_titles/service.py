@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+from app.core.pagination import Order
 from app.modules.job_titles.exceptions import JobTitleNotFoundError
 from app.modules.job_titles.models import JobTitle
 from app.modules.job_titles.ports import JobTitleStore
@@ -11,8 +12,10 @@ class JobTitleService:
     def __init__(self, job_titles: JobTitleStore) -> None:
         self._job_titles = job_titles
 
-    async def list_all(self, *, is_active: bool) -> Sequence[JobTitle]:
-        return await self._job_titles.list_all(is_active=is_active)
+    async def list_all(
+        self, *, is_active: bool | None = None, q: str | None = None, order: Order = "asc"
+    ) -> Sequence[JobTitle]:
+        return await self._job_titles.list_all(is_active=is_active, q=q, order=order)
 
     async def get(self, job_title_id: UUID) -> JobTitle:
         job_title = await self._job_titles.get_by_id(job_title_id)

@@ -1,8 +1,8 @@
 from functools import lru_cache
-from typing import Annotated, Literal, Self
+from typing import Annotated
 
-from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -18,18 +18,38 @@ class Settings(BaseSettings):
     database_pool_timeout: int = 30
     database_pool_recycle: int = 1800
 
-    # "local" es SOLO para desarrollo: quien tenga el secreto puede crear tokens de admin.
-    auth_mode: Literal["auth0", "local"] = "auth0"
+    # Secretos SIN valor por defecto: si faltan, la app no arranca. Un valor por defecto
+    # conocido permitiría fabricar tokens de admin o entrar con una contraseña pública.
     # SecretStr se muestra como ********** si se imprime, para que no acabe en un log.
-    local_jwt_secret: Annotated[SecretStr | None, Field(min_length=32)] = None
-
-    auth0_domain: str
-    auth0_audience: str
+    jwt_secret: Annotated[SecretStr, Field(min_length=32)]
+    admin_email: str
+    admin_password: Annotated[SecretStr, Field(min_length=12)]
 
     debug: bool = False
 
+    # Orígenes del front que pueden llamar a la API desde el navegador, separados por comas:
+    # CORS_ORIGINS=http://localhost:5173,https://mi-front.up.railway.app
+    # NoDecode evita que pydantic-settings intente leerlo como JSON.
+    cors_origins: Annotated[list[str], NoDecode] = []
+
     # extra="ignore": el .env puede tener variables que la app no usa (DATABASE_URL_TEST).
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def split_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("admin_email")
+    @classmethod
+    def normalize_admin_email(cls, value: str) -> str:
+        # Los emails se guardan siempre en minúsculas (ver users.email).
+        email = value.strip().lower()
+        if "@" not in email:
+            raise ValueError("ADMIN_EMAIL debe ser un email")
+        return email
 
     @field_validator("database_url")
     @classmethod
@@ -43,12 +63,6 @@ class Settings(BaseSettings):
             if value.startswith(prefix):
                 return "postgresql+asyncpg://" + value.removeprefix(prefix)
         return value
-
-    @model_validator(mode="after")
-    def local_mode_requires_secret(self) -> Self:
-        if self.auth_mode == "local" and self.local_jwt_secret is None:
-            raise ValueError("AUTH_MODE=local requiere LOCAL_JWT_SECRET")
-        return self
 
 
 @lru_cache

@@ -1,8 +1,11 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
+from app.core.pagination import Order
 from app.core.responses import error_responses
+from app.core.schemas import SearchTerm
 from app.modules.auth.public import require_permission
 from app.modules.job_titles.dependencies import JobTitleServiceDep
 from app.modules.job_titles.schemas import JobTitleCreate, JobTitleResponse, JobTitleUpdate
@@ -21,8 +24,14 @@ can_write = Depends(require_permission("job-titles:write"))
     dependencies=[can_read],
     responses=error_responses(),
 )
-async def list_job_titles(service: JobTitleServiceDep, is_active: bool = True):
-    return await service.list_all(is_active=is_active)
+async def list_job_titles(
+    service: JobTitleServiceDep,
+    is_active: bool | None = None,  # omitirlo devuelve activos e inactivos
+    q: SearchTerm | None = None,  # coincidencia parcial en el nombre
+    sort: Literal["name"] = "name",
+    order: Order = "asc",
+):
+    return await service.list_all(is_active=is_active, q=q, order=order)
 
 
 @router.get(

@@ -8,10 +8,13 @@ from collections.abc import Sequence
 from typing import Protocol
 from uuid import UUID
 
+from app.core.pagination import Order
 from app.modules.job_titles.models import JobTitle
 
 
 class JobTitleStore(Protocol):
     async def get_by_id(self, job_title_id: UUID) -> JobTitle | None: ...
-    async def list_all(self, *, is_active: bool) -> Sequence[JobTitle]: ...
+    async def list_all(
+        self, *, is_active: bool | None, q: str | None, order: Order
+    ) -> Sequence[JobTitle]: ...
     async def save(self, job_title: JobTitle) -> JobTitle: ...

@@ -1,13 +1,27 @@
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.pagination import Page
 from app.modules.departments.dependencies import get_department_service
 from app.modules.employees.dependencies import get_employee_service
 from app.modules.job_titles.dependencies import get_job_title_service
 from app.modules.positions.dependencies import get_position_service
 from app.seed.data import DEPARTMENTS, PEOPLE
+
+
+async def _all_items[T](fetch: Callable[[str | None], Awaitable[Page[T]]]) -> AsyncIterator[T]:
+    """Recorre todas las páginas de un listado, siguiendo el cursor."""
+    after = None
+    while True:
+        page = await fetch(after)
+        for item in page.items:
+            yield item
+        if page.next_cursor is None:
+            return
+        after = page.next_cursor
 
 
 async def seed(session: AsyncSession) -> int:
@@ -19,16 +33,30 @@ async def seed(session: AsyncSession) -> int:
     positions = get_position_service(session)
 
     # Se incluyen los inactivos: sus nombres y emails también están ocupados.
-    title_ids = {
-        title.name: title.id
-        for active in (True, False)
-        for title in await job_titles.list_all(is_active=active)
+    # is_active=None (omitido) devuelve activos e inactivos.
+    title_ids = {title.name: title.id for title in await job_titles.list_all()}
+    department_ids = {
+        d.name: d.id
+        async for d in _all_items(
+            lambda after: departments.list_page(q=None, sort="name", order="asc", after=after)
+        )
     }
-    department_ids = {d.name: d.id for d in await departments.list_all()}
     employee_ids = {
         employee.email: employee.id
-        for active in (True, False)
-        for employee in await employees.list_all(is_active=active, email=None)
+        async for employee in _all_items(
+            lambda after: employees.list_page(
+                is_active=None,
+                email=None,
+                q=None,
+                department_id=None,
+                manager_id=None,
+                has_manager=None,
+                job_title_id=None,
+                sort="last_name",
+                order="asc",
+                after=after,
+            )
+        )
     }
 
     for name in {p.title for person in PEOPLE for p in person.positions} - title_ids.keys():

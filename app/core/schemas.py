@@ -51,6 +51,23 @@ class OutputModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PageResponse[T](OutputModel):
+    """Respuesta de los listados paginados por cursor."""
+
+    items: list[T]
+    # Cursor opaco: se envía tal cual como ?after=. None indica que es la última página.
+    next_cursor: str | None
+
+
+# Texto de búsqueda (?q=): sin espacios en los extremos y no vacío.
+SearchTerm = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+# Cursor opaco de paginación (?after=). Solo se valida su tamaño; el formato lo comprueba
+# core/pagination.py y un cursor mal formado también da 422.
+Cursor = Annotated[str, StringConstraints(min_length=1, max_length=512)]
+
+
 class ErrorResponse(BaseModel):
     """Todas las respuestas de error de la API tienen esta forma."""
 

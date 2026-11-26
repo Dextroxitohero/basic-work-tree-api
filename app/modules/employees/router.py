@@ -1,8 +1,11 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
+from app.core.pagination import Order
 from app.core.responses import error_responses
+from app.core.schemas import Cursor, PageResponse, SearchTerm
 from app.modules.auth.public import require_permission
 from app.modules.employees.dependencies import EmployeeServiceDep
 from app.modules.employees.schemas import (
@@ -24,15 +27,37 @@ can_write = Depends(require_permission("employees:write"))
 # solo llegan los declarados en el contrato.
 @router.get(
     "",
-    response_model=list[EmployeeResponse],
+    response_model=PageResponse[EmployeeResponse],
     dependencies=[can_read],
     responses=error_responses(),
 )
 async def list_employees(
-    service: EmployeeServiceDep, is_active: bool = True, email: Email | None = None
-):
+    service: EmployeeServiceDep,
     # Los parámetros simples que no están en la ruta se leen del query string.
-    return await service.list_all(is_active=is_active, email=email)
+    # Omitir is_active devuelve activos e inactivos.
+    is_active: bool | None = None,
+    email: Email | None = None,  # coincidencia exacta
+    q: SearchTerm | None = None,  # coincidencia parcial en nombre, apellido y email
+    department_id: UUID | None = None,
+    manager_id: UUID | None = None,
+    has_manager: bool | None = None,  # false: las raíces del organigrama
+    job_title_id: UUID | None = None,  # puesto actual
+    sort: Literal["last_name", "first_name", "hire_date", "created_at"] = "last_name",
+    order: Order = "asc",
+    after: Cursor | None = None,  # el next_cursor de la página anterior
+):
+    return await service.list_page(
+        is_active=is_active,
+        email=email,
+        q=q,
+        department_id=department_id,
+        manager_id=manager_id,
+        has_manager=has_manager,
+        job_title_id=job_title_id,
+        sort=sort,
+        order=order,
+        after=after,
+    )
 
 
 @router.get(

@@ -1,7 +1,7 @@
-from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+from app.core.pagination import Order, Page
 from app.modules.departments.exceptions import DepartmentNotFoundError
 from app.modules.departments.models import Department
 from app.modules.departments.ports import DepartmentStore, Managers
@@ -12,8 +12,10 @@ class DepartmentService:
         self._departments = departments
         self._managers = managers
 
-    async def list_all(self) -> Sequence[Department]:
-        return await self._departments.list_all()
+    async def list_page(
+        self, *, q: str | None, sort: str, order: Order, after: str | None
+    ) -> Page[Department]:
+        return await self._departments.list_page(q=q, sort=sort, order=order, after=after)
 
     async def get_detail(self, department_id: UUID) -> Department:
         department = await self._departments.get_detail(department_id)

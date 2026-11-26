@@ -1,10 +1,20 @@
 from collections.abc import Sequence
+from datetime import date
 from uuid import UUID
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.pagination import (
+    Order,
+    Page,
+    SortSpec,
+    apply_page,
+    build_page,
+    contains_pattern,
+    parse_aware_datetime,
+)
 from app.core.repository import flush
 from app.modules.employees.exceptions import EmailAlreadyExistsError
 from app.modules.employees.models import Employee
@@ -16,6 +26,17 @@ _HIERARCHY_LOCK_ID = 7_401
 
 # Constraint de la DB -> error de este módulo.
 _CONFLICTS = {"uq_employees_email": EmailAlreadyExistsError}
+
+# Columnas por las que se puede ordenar (?sort=). Cada una necesita un índice (columna, id).
+_SORTS = {
+    spec.name: spec
+    for spec in (
+        SortSpec("last_name", Employee.last_name),
+        SortSpec("first_name", Employee.first_name),
+        SortSpec("hire_date", Employee.hire_date, date.fromisoformat),
+        SortSpec("created_at", Employee.created_at, parse_aware_datetime),
+    )
+}
 
 
 class EmployeeRepository:
@@ -44,12 +65,53 @@ class EmployeeRepository:
         )
         return await self._session.scalar(stmt)
 
-    async def list_all(self, *, is_active: bool, email: str | None) -> Sequence[Employee]:
-        stmt = self._base_query().where(Employee.is_active == is_active)
+    async def list_page(
+        self,
+        *,
+        is_active: bool | None,
+        email: str | None,
+        q: str | None,
+        department_id: UUID | None,
+        manager_id: UUID | None,
+        has_manager: bool | None,
+        job_title_id: UUID | None,
+        sort: str,
+        order: Order,
+        after: str | None,
+    ) -> Page[Employee]:
+        # Cada filtro es opcional: solo se agrega al WHERE si el cliente lo envió.
+        stmt = self._base_query()
+        if is_active is not None:
+            stmt = stmt.where(Employee.is_active == is_active)
         if email is not None:
-            stmt = stmt.where(Employee.email == email)
-        stmt = stmt.order_by(Employee.last_name, Employee.first_name)
-        return (await self._session.scalars(stmt)).all()
+            stmt = stmt.where(Employee.email == email)  # coincidencia exacta
+        if q is not None:
+            pattern = contains_pattern(q)
+            stmt = stmt.where(
+                or_(
+                    Employee.first_name.ilike(pattern, escape="\\"),
+                    Employee.last_name.ilike(pattern, escape="\\"),
+                    Employee.email.ilike(pattern, escape="\\"),
+                )
+            )
+        if department_id is not None:
+            stmt = stmt.where(Employee.department_id == department_id)
+        if manager_id is not None:
+            stmt = stmt.where(Employee.manager_id == manager_id)
+        if has_manager is not None:
+            stmt = stmt.where(
+                Employee.manager_id.is_not(None) if has_manager else Employee.manager_id.is_(None)
+            )
+        if job_title_id is not None:
+            # has() genera un EXISTS sobre el puesto actual (el que no tiene end_date).
+            stmt = stmt.where(
+                Employee.current_position.has(PositionHistory.job_title_id == job_title_id)
+            )
+
+        spec = _SORTS[sort]
+        stmt = apply_page(stmt, spec=spec, id_column=Employee.id, order=order, after=after)
+        rows = (await self._session.scalars(stmt)).all()
+        return build_page(rows, spec=spec, order=order)
 
     async def list_reports(self, manager_id: UUID) -> Sequence[Employee]:
         stmt = (

@@ -23,4 +23,6 @@ USER appuser
 # Railway inyecta $PORT; 8000 es el valor por defecto para probar en local.
 # Forma "sh -c" para que se expanda la variable. exec reemplaza el shell por uvicorn,
 # así recibe las señales de apagado correctamente.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# --proxy-headers: detrás del proxy de Railway, request.client es la IP real del cliente (el
+# límite de intentos de login la necesita).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

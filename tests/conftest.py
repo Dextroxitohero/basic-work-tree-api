@@ -21,28 +21,23 @@ _test_url = os.environ.get("DATABASE_URL_TEST") or dotenv_values(ROOT / ".env").
 if not _test_url or not _test_url.endswith("_test"):
     raise RuntimeError("DATABASE_URL_TEST debe apuntar a una base de datos terminada en _test")
 os.environ["DATABASE_URL"] = _test_url
-os.environ["AUTH_MODE"] = "auth0"
-os.environ["AUTH0_DOMAIN"] = "test.auth0.local"
-os.environ["AUTH0_AUDIENCE"] = "https://employee-api"
+os.environ["JWT_SECRET"] = "secreto-solo-para-tests-" + "x" * 24
+os.environ["ADMIN_EMAIL"] = "Admin@Example.com"  # con mayúsculas: debe guardarse en minúsculas
+os.environ["ADMIN_PASSWORD"] = "contraseña-del-admin-123"
+os.environ["CORS_ORIGINS"] = "http://localhost:5173"
 
-from app.core.database import engine  # noqa: E402
+from app.core.database import AsyncSessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Base  # noqa: E402
-from app.modules.auth.schemas import TokenPayload  # noqa: E402
-from app.modules.auth.verifier import get_token_verifier  # noqa: E402
+from app.models import Base, User  # noqa: E402
+from app.modules.auth.dependencies import get_password_hasher  # noqa: E402
+from app.modules.auth.guard import get_auth_guard  # noqa: E402
+from app.modules.auth.permissions import ALL_PERMISSIONS  # noqa: E402
+from app.modules.auth.tokens import get_tokens  # noqa: E402
 
-ALL_PERMISSIONS = (
-    "employees:read,employees:write,positions:write,job-titles:write,departments:write"
-)
+# La contraseña de todos los usuarios que crea la fixture make_user.
+TEST_PASSWORD = "contraseña-de-prueba-1"
 
 Factory = Callable[..., Awaitable[dict[str, Any]]]
-
-
-class FakeTokenVerifier:
-    """En los tests el token ES la lista de permisos, separados por comas."""
-
-    async def verify(self, token: str) -> TokenPayload:
-        return TokenPayload(sub="test-user", permissions=token.split(","))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -57,26 +52,92 @@ async def dispose_engine() -> AsyncGenerator[None]:
     await engine.dispose()
 
 
+@pytest.fixture(scope="session")
+async def password_hash() -> str:
+    # Argon2 es lento a propósito: se calcula UNA vez y se reutiliza para todos los usuarios.
+    return await get_password_hasher().hash(TEST_PASSWORD)
+
+
 @pytest.fixture
 async def anonymous_client() -> AsyncGenerator[AsyncClient]:
     tables = ", ".join(Base.metadata.tables)
     async with engine.begin() as connection:
         await connection.execute(text(f"TRUNCATE {tables} CASCADE"))
+    # Los contadores del límite de intentos viven en memoria: cada test empieza de cero.
+    get_auth_guard().clear()
 
-    # dependency_overrides: FastAPI sustituye una dependencia sin tocar el código de la app.
-    app.dependency_overrides[get_token_verifier] = FakeTokenVerifier
     # ASGITransport llama a la app directamente en memoria, sin abrir un puerto.
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test/api/v1") as client:
         yield client
-    app.dependency_overrides.clear()
 
 
 @pytest.fixture
-async def client(anonymous_client: AsyncClient) -> AsyncClient:
+def make_user(anonymous_client: AsyncClient, password_hash: str) -> Factory:
+    """Crea un usuario real en la base y devuelve su token (emitido por la propia API)."""
+    counter = 0
+
+    async def create(
+        *,
+        permissions: tuple[str, ...] | list[str] = ALL_PERMISSIONS,
+        email: str | None = None,
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        nonlocal counter
+        counter += 1
+        email = email or f"user{counter}@example.com"
+        async with AsyncSessionLocal.begin() as session:
+            user = User(
+                email=email,
+                full_name=f"Usuario {counter}",
+                password_hash=password_hash,
+                is_active=is_active,
+                permissions=list(permissions),
+            )
+            session.add(user)
+            await session.flush()
+            token, _ = get_tokens().issue(user)
+            user_id = str(user.id)
+        return {
+            "id": user_id,
+            "email": email,
+            "token": token,
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+
+    return create
+
+
+@pytest.fixture
+async def admin(make_user: Factory) -> dict[str, Any]:
+    return await make_user(permissions=ALL_PERMISSIONS)
+
+
+@pytest.fixture
+async def client(anonymous_client: AsyncClient, admin: dict[str, Any]) -> AsyncClient:
     """Cliente autenticado con todos los permisos."""
-    anonymous_client.headers["Authorization"] = f"Bearer {ALL_PERMISSIONS}"
+    anonymous_client.headers.update(admin["headers"])
     return anonymous_client
+
+
+@pytest.fixture
+def get_all(client: AsyncClient) -> Callable[..., Awaitable[list[dict[str, Any]]]]:
+    """Recorre todas las páginas de un listado paginado, siguiendo next_cursor."""
+
+    async def fetch(path: str, **params: Any) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        after = None
+        while True:
+            query = params | ({"after": after} if after else {})
+            response = await client.get(path, params=query)
+            assert response.status_code == 200, response.text
+            page = response.json()
+            items += page["items"]
+            after = page["next_cursor"]
+            if after is None:
+                return items
+
+    return fetch
 
 
 @pytest.fixture

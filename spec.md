@@ -73,7 +73,7 @@ Compromiso aceptado: los servicios usan directamente los modelos de SQLAlchemy d
 1. Crea `app/modules/<nombre>/` con los archivos de la tabla anterior.
 2. Regístralo en `app/router.py` y `app/models.py`.
 3. Genera la migración: `alembic revision --autogenerate -m "descripcion"`.
-4. Agrega sus tests en `tests/<nombre>/` y sus permisos en `tests/auth/test_auth0.py` y `app/modules/auth/local.py`.
+4. Agrega sus tests en `tests/<nombre>/` y su permiso en `app/modules/auth/permissions.py` (y en el test de permisos de `tests/auth/test_api.py`).
 5. Escribe su `spec.md`.
 
 ## Decisiones de diseño
@@ -108,4 +108,4 @@ Cada worker tiene su propio pool: conexiones máximas = workers × (`DATABASE_PO
 
 ## Fuera de alcance
 
-Paginación, varias monedas, permisos por departamento, registro de auditoría y pooler externo.
+Varias monedas, permisos por departamento, registro de auditoría y pooler externo.

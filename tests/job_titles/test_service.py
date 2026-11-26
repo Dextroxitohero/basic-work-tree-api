@@ -18,8 +18,10 @@ class InMemoryJobTitles:
     async def get_by_id(self, job_title_id: UUID) -> JobTitle | None:
         return self.rows.get(job_title_id)
 
-    async def list_all(self, *, is_active: bool) -> list[JobTitle]:
-        return [row for row in self.rows.values() if row.is_active == is_active]
+    async def list_all(
+        self, *, is_active: bool | None, q: str | None, order: str
+    ) -> list[JobTitle]:
+        return [row for row in self.rows.values() if is_active in (None, row.is_active)]
 
     async def save(self, job_title: JobTitle) -> JobTitle:
         job_title.id = job_title.id or uuid4()

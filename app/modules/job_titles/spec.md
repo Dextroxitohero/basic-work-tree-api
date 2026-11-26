@@ -6,10 +6,23 @@ Catálogo de puestos de la empresa.
 
 | Método | Ruta | Entrada | Salida | Permiso |
 |---|---|---|---|---|
-| GET | `/job-titles` | `is_active` (query) | `list[JobTitleResponse]` | `employees:read` |
+| GET | `/job-titles` | `is_active`, `q`, `sort`, `order` (query) | `list[JobTitleResponse]` | `employees:read` |
 | POST | `/job-titles` | `JobTitleCreate` | 201 `JobTitleResponse` | `job-titles:write` |
 | GET | `/job-titles/{id}` | — | `JobTitleResponse` | `employees:read` |
 | PATCH | `/job-titles/{id}` | `JobTitleUpdate` | `JobTitleResponse` | `job-titles:write` |
+
+## Listado: `GET /job-titles`
+
+El catálogo es pequeño: se devuelve completo, sin paginar.
+
+| Parámetro | Tipo | Efecto |
+|---|---|---|
+| `is_active` | `bool` | Omitido: activos e inactivos. `true` o `false` filtra |
+| `q` | texto, 1 a 100 | Coincidencia parcial, sin distinguir mayúsculas, en `name` |
+| `sort` | `name` | Es el único orden disponible |
+| `order` | `asc`, `desc` | Por defecto `asc` |
+
+Un valor inválido da 422 `validation_error`.
 
 ## Validaciones
 

@@ -28,7 +28,7 @@ py -3.13 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-**2. Activa el usuario admin de desarrollo**
+**2. Configura el administrador y el secreto de los tokens**
 
 Genera un secreto:
 
@@ -36,14 +36,13 @@ Genera un secreto:
 .venv\Scripts\python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Cambia estas dos líneas del archivo `.env`. La segunda está comentada: quítale el `#` inicial.
+Rellena estas tres líneas del archivo `.env`. La app no arranca si falta alguna:
 
 ```env
-AUTH_MODE=local
-LOCAL_JWT_SECRET=el-secreto-generado
+JWT_SECRET=el-secreto-generado
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=una-contraseña-de-12-o-mas-caracteres
 ```
-
-¿Prefieres usar Auth0? Mira [Autenticación](#autenticación).
 
 **3. Arranca la base de datos, crea las tablas y carga los datos de ejemplo**
 
@@ -61,13 +60,14 @@ docker compose up -d --wait
 
 **5. Entra como admin**
 
-En otra terminal, obtén el token:
+Al arrancar, la API crea al administrador con `ADMIN_EMAIL` y `ADMIN_PASSWORD`. Abre http://localhost:8010/docs, ejecuta `POST /auth/login` con ese email y contraseña, copia el `access_token` de la respuesta, pulsa **Authorize** y pégalo (sin el prefijo `Bearer`). También hay documentación en http://localhost:8010/redoc.
+
+Para obtener un token a mano:
 
 ```powershell
-.venv\Scripts\python -m app.modules.auth.admin_token
+$login = Invoke-RestMethod -Method Post -Uri "http://localhost:8010/api/v1/auth/login" -ContentType "application/json" -Body (@{ email = "admin@example.com"; password = "TU_ADMIN_PASSWORD" } | ConvertTo-Json)
+$login.access_token
 ```
-
-Abre http://localhost:8010/docs, pulsa **Authorize** y pega el token, sin el prefijo `Bearer`. También hay documentación en http://localhost:8010/redoc.
 
 > En macOS o Linux usa `python3 -m venv .venv`, `.venv/bin/` en lugar de `.venv\Scripts\` y `cp` en lugar de `Copy-Item`.
 
@@ -98,7 +98,7 @@ Elena Vargas — Dirección General
         └── Iván Romero — Asesoría Comercial
 ```
 
-El email de cada uno es `nombre.apellido@example.com`, sin tildes ni eñes. El admin es un usuario aparte, no un empleado.
+El email de cada uno es `nombre.apellido@example.com`, sin tildes ni eñes. El administrador es un usuario de acceso a la API, no un empleado.
 
 ## Uso
 
@@ -106,7 +106,8 @@ Con el servidor encendido y la semilla cargada, desde PowerShell:
 
 ```powershell
 $api = "http://localhost:8010/api/v1"
-$token = .venv\Scripts\python -m app.modules.auth.admin_token
+$login = Invoke-RestMethod -Method Post -Uri "$api/auth/login" -ContentType "application/json" -Body (@{ email = "admin@example.com"; password = "TU_ADMIN_PASSWORD" } | ConvertTo-Json)
+$token = $login.access_token
 $headers = @{ Authorization = "Bearer $token" }
 
 function Get-Api($path) {
@@ -124,7 +125,7 @@ Consultar:
 
 ```powershell
 # Buscar a un empleado por email
-$diego = (Get-Api "/employees?email=diego.campos@example.com")[0]
+$diego = (Get-Api "/employees?email=diego.campos@example.com").items[0]
 
 # Su equipo completo y su historial de puestos
 Get-Api "/employees/$($diego.id)/tree" | ConvertTo-Json -Depth 10
@@ -168,7 +169,7 @@ Todos van bajo `/api/v1`.
 
 | Método | Ruta | Permiso | Descripción |
 |---|---|---|---|
-| GET | `/employees` | `employees:read` | Listar; filtros `is_active` y `email` |
+| GET | `/employees` | `employees:read` | Listar con cursor; búsqueda `q`, filtros, `sort` y `order` |
 | POST | `/employees` | `employees:write` | Crear |
 | GET | `/employees/{id}` | `employees:read` | Detalle con historial y reportes directos |
 | PATCH | `/employees/{id}` | `employees:write` | Editar |
@@ -178,16 +179,18 @@ Todos van bajo `/api/v1`.
 | GET | `/employees/{id}/positions` | `employees:read` | Historial de puestos |
 | GET | `/employees/{id}/positions/current` | `employees:read` | Puesto actual |
 | POST | `/employees/{id}/positions` | `positions:write` | Asignar puesto |
-| GET | `/job-titles` | `employees:read` | Listar catálogo; filtro `is_active` |
+| GET | `/job-titles` | `employees:read` | Listar catálogo; `q`, `is_active`, `order` |
 | POST | `/job-titles` | `job-titles:write` | Crear puesto en el catálogo |
 | GET | `/job-titles/{id}` | `employees:read` | Detalle |
 | PATCH | `/job-titles/{id}` | `job-titles:write` | Editar o descontinuar |
-| GET | `/departments` | `employees:read` | Listar |
+| GET | `/departments` | `employees:read` | Listar con cursor; `q`, `sort` y `order` |
 | POST | `/departments` | `departments:write` | Crear |
-| GET | `/departments/{id}` | `employees:read` | Detalle con empleados activos |
+| GET | `/departments/{id}` | `employees:read` | Detalle, con `employee_count` |
 | PATCH | `/departments/{id}` | `departments:write` | Editar o cambiar encargado |
 
-Las listas muestran solo registros activos salvo que envíes `is_active=false`. El permiso `employees:read` incluye los salarios de todos los empleados.
+**Listados.** `GET /employees` y `GET /departments` responden `{ "items": [...], "next_cursor": "..." | null }`. Para pedir la página siguiente, envía el `next_cursor` en `?after=`; el tamaño de página (50) lo fija el servidor. `GET /employees` acepta `q`, `email`, `department_id`, `manager_id`, `has_manager`, `job_title_id`, `is_active`, `sort` y `order`; si omites `is_active`, devuelve activos e inactivos. Los detalles están en el spec de cada módulo y en el de [`core`](app/core/spec.md#paginación-por-cursor).
+
+El permiso `employees:read` incluye los salarios de todos los empleados.
 
 Todos los errores tienen la misma forma:
 
@@ -203,47 +206,40 @@ Variables del archivo `.env`, que no debe subirse al repositorio (ya está en `.
 |---|---|---|---|
 | `DATABASE_URL` | Sí | — | Conexión a PostgreSQL (`postgresql+asyncpg://...`) |
 | `DATABASE_URL_TEST` | Solo tests | — | Base de datos de tests; su nombre debe terminar en `_test` |
-| `AUTH_MODE` | No | `auth0` | `auth0`, o `local` solo para desarrollo |
-| `LOCAL_JWT_SECRET` | Con `AUTH_MODE=local` | — | Secreto de al menos 32 caracteres |
-| `AUTH0_DOMAIN` | Sí | — | Dominio del tenant, sin `https://` |
-| `AUTH0_AUDIENCE` | Sí | — | Identifier de la API; también se usa en modo local |
+| `JWT_SECRET` | Sí | — | Secreto que firma los tokens, mínimo 32 caracteres |
+| `ADMIN_EMAIL` | Sí | — | Email del administrador inicial |
+| `ADMIN_PASSWORD` | Sí | — | Contraseña del administrador inicial, mínimo 12 caracteres |
 | `DATABASE_POOL_SIZE` | No | 10 | Conexiones permanentes por worker |
 | `DATABASE_MAX_OVERFLOW` | No | 5 | Conexiones extra por worker en picos |
 | `DATABASE_POOL_TIMEOUT` | No | 30 | Segundos de espera por una conexión |
 | `DATABASE_POOL_RECYCLE` | No | 1800 | Segundos antes de renovar una conexión |
 | `DEBUG` | No | `false` | Muestra el SQL en consola |
+| `CORS_ORIGINS` | No | ninguno | Orígenes del front permitidos, separados por comas (`http://localhost:5173,https://mi-front.com`) |
 
 Reinicia el servidor después de cambiar el `.env`.
 
 ## Autenticación
 
-La API no guarda usuarios ni contraseñas: valida un token JWT. Hay dos modos.
+La API tiene sus propios usuarios y emite sus propios tokens JWT (HS256, 12 horas). No depende de ningún proveedor externo.
 
-### Modo local (desarrollo)
+| Método | Ruta | Descripción |
+|---|---|---|
+| POST | `/auth/signup` | Crea una cuenta con `{full_name, email, password}`. Queda con solo `employees:read` |
+| POST | `/auth/login` | `{email, password}` → `{access_token, token_type, expires_in, user}` |
+| GET | `/auth/me` | El usuario del token, con sus permisos actuales |
+| GET | `/users` | Lista usuarios (`users:write`) |
+| PATCH | `/users/{id}` | Cambia `permissions` o `is_active` (`users:write`) |
 
-El comando `python -m app.modules.auth.admin_token` emite un token para `admin@example.com`, con todos los permisos y válido 12 horas. Se configura en el paso 2 de [Inicio rápido](#inicio-rápido).
+- Las contraseñas se guardan con Argon2id; nunca se devuelven ni se registran en logs.
+- El token se envía en `Authorization: Bearer <token>`. En cada petición la API carga al usuario de la base: si lo desactivas o le cambias los permisos, el efecto es inmediato aunque el token no haya caducado.
+- Quien se registra solo recibe lectura. Para darle más permisos, el administrador usa `PATCH /users/{id}`.
+- El sistema siempre conserva al menos un administrador activo (un usuario con `users:write`). Quitar ese permiso o desactivar al último da 409 `last_admin_required`.
+- Login y signup tienen límite de intentos: tras 5 contraseñas incorrectas para un email, ese email queda bloqueado 15 minutos (429, con `Retry-After`).
+- El administrador de `ADMIN_EMAIL` se crea al arrancar si no existe, y si existe se reactiva y recupera todos los permisos. Su contraseña no se modifica.
 
-> **No lo uses en producción.** Quien tenga el secreto puede crear tokens de admin.
+Si olvidas la contraseña del administrador, borra su fila de la tabla `users` y reinicia la API: se crea de nuevo con `ADMIN_PASSWORD`.
 
-### Modo Auth0
-
-1. En **Applications > APIs**, crea una API. Su *Identifier* es `AUTH0_AUDIENCE`.
-2. En **Settings** de la API, activa **Enable RBAC** y **Add Permissions in the Access Token**.
-3. En **Permissions**, crea: `employees:read`, `employees:write`, `positions:write`, `job-titles:write` y `departments:write`.
-4. Asigna los permisos a los usuarios (por roles) o a una aplicación *Machine to Machine*.
-5. En `.env`, pon `AUTH_MODE=auth0`, `AUTH0_DOMAIN` y `AUTH0_AUDIENCE`.
-
-Para obtener un token de prueba con una aplicación *Machine to Machine*:
-
-```powershell
-$auth = Invoke-RestMethod -Method Post -Uri "https://TU_DOMINIO/oauth/token" -Body @{
-    grant_type    = "client_credentials"
-    client_id     = "TU_CLIENT_ID"
-    client_secret = "TU_CLIENT_SECRET"
-    audience      = "https://employee-api"
-}
-$token = $auth.access_token
-```
+Todos los detalles están en el [spec del módulo](app/modules/auth/spec.md).
 
 ## Desarrollo
 
@@ -275,7 +271,7 @@ El código se organiza por módulo de negocio: todo lo de empleados está en `ap
 | `app/modules/positions` | Historial de puestos, salarios y fechas | [spec](app/modules/positions/spec.md) |
 | `app/modules/job_titles` | Catálogo de puestos | [spec](app/modules/job_titles/spec.md) |
 | `app/modules/departments` | Departamentos y encargados | [spec](app/modules/departments/spec.md) |
-| `app/modules/auth` | Autenticación (Auth0 o local) y permisos | [spec](app/modules/auth/spec.md) |
+| `app/modules/auth` | Usuarios, login, tokens y permisos | [spec](app/modules/auth/spec.md) |
 | `app/core` | Piezas comunes: configuración, base de datos, errores | [spec](app/core/spec.md) |
 | `app/seed` | Datos de ejemplo | — |
 | `app/main.py` | Crea la aplicación | — |
@@ -293,10 +289,10 @@ Dentro de un módulo, una petición recorre `router` → `service` → `reposito
 |---|---|
 | No conecta al puerto 5440 | `docker compose up -d --wait` |
 | `Field required` al arrancar | Falta una variable en `.env` |
-| `AUTH_MODE=local requiere LOCAL_JWT_SECRET` | Genera el secreto y ponlo en `.env` |
-| `Solo disponible con AUTH_MODE=local` | Estás en modo Auth0: pide el token a Auth0 o cambia de modo |
+| La app no arranca y menciona `jwt_secret`, `admin_email` o `admin_password` | Falta esa variable en `.env`, o `JWT_SECRET` tiene menos de 32 caracteres o `ADMIN_PASSWORD` menos de 12 |
 | `relation "employees" does not exist` | `alembic upgrade head` |
-| 401 `invalid_token` | Token ausente, vencido o de otro modo; reinicia el servidor si cambiaste `.env` |
+| 401 `invalid_token` | Token ausente, vencido, de un usuario desactivado o firmado con otro `JWT_SECRET` |
+| 401 `invalid_credentials` | Email o contraseña incorrectos |
+| 429 `too_many_requests` | Demasiados intentos; espera los segundos de `Retry-After` |
 | 403 `insufficient_permissions` | Falta el permiso indicado en `details.required` |
-| 503 `auth_provider_unavailable` | No se alcanza Auth0: revisa `AUTH0_DOMAIN` y la conexión |
 | Tildes mal mostradas en PowerShell 5.1 | Solo afecta a la consola; usa Swagger UI o PowerShell 7 |

@@ -20,6 +20,10 @@ class NotFoundError(DomainError):
     """El recurso no existe."""
 
 
+class InvalidInputError(DomainError):
+    """Un valor de la petición es inválido y solo se puede comprobar fuera de Pydantic."""
+
+
 class ConflictError(DomainError):
     """La operación choca con el estado actual."""
 
@@ -32,5 +36,12 @@ class ForbiddenError(DomainError):
     """Se sabe quién es, pero no tiene permiso."""
 
 
-class ServiceUnavailableError(DomainError):
-    """Un servicio externo no responde."""
+class TooManyRequestsError(DomainError):
+    """El cliente superó el límite de intentos. retry_after son los segundos de espera."""
+
+    code = "too_many_requests"
+    message = "Demasiados intentos. Inténtalo de nuevo más tarde"
+
+    def __init__(self, *, retry_after: int, message: str | None = None) -> None:
+        self.retry_after = retry_after
+        super().__init__(message)
