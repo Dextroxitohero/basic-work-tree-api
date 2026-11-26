@@ -12,7 +12,7 @@ COPY pyproject.toml ./
 COPY app ./app
 RUN pip install --no-cache-dir .
 
-# Migraciones (las ejecuta Railway como pre-deploy command, ver railway.json).
+# Migraciones: las ejecuta el propio CMD al arrancar (ver más abajo).
 COPY alembic.ini ./
 COPY alembic ./alembic
 
@@ -23,6 +23,9 @@ USER appuser
 # Railway inyecta $PORT; 8000 es el valor por defecto para probar en local.
 # Forma "sh -c" para que se expanda la variable. exec reemplaza el shell por uvicorn,
 # así recibe las señales de apagado correctamente.
+# Antes de arrancar se aplican las migraciones (si ya están al día, no hace nada). Así la app
+# nunca arranca sin sus tablas, aunque el pre-deploy de la plataforma no se ejecute. Si la
+# migración falla, el contenedor termina y no se arranca el servidor.
 # --proxy-headers: detrás del proxy de Railway, request.client es la IP real del cliente (el
 # límite de intentos de login la necesita).
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
