@@ -4,13 +4,14 @@ Piezas técnicas comunes. No conoce a ningún módulo de negocio.
 
 | Archivo | Contenido |
 |---|---|
-| `config.py` | Configuración desde `.env`, validada al arrancar (incluye `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` y `CORS_ORIGINS`) |
+| `config.py` | Configuración por entorno (`APP_ENV`), validada al arrancar (incluye `JWT_SECRET`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` y `CORS_ORIGINS`) |
 | `database.py` | Pool, sesión por petición (`get_db`) y `DbSession` |
 | `models.py` | Base de SQLAlchemy, mixins y nombres de constraints |
 | `schemas.py` | Contratos base: `InputModel`, `PatchModel`, `OutputModel`, `PageResponse`, `ErrorResponse` |
 | `repository.py` | `flush`: traduce violaciones de unicidad |
 | `pagination.py` | Paginación por cursor: `Page`, cursor, orden y búsqueda parcial |
 | `rate_limit.py` | `SlidingWindowLimiter`: límite de intentos en memoria |
+| `client_ip.py` | `client_ip`: la IP del cliente detrás de un proxy, sin fiarse del cliente |
 | `exceptions.py` | Categorías de error |
 | `error_handlers.py` | Categoría de error → respuesta HTTP |
 | `responses.py` | Documenta los errores en OpenAPI |
@@ -70,14 +71,22 @@ LIMIT 51                                       -- una fila de más indica que ha
 
 `CORSMiddleware` autoriza a los orígenes de `CORS_ORIGINS` (separados por comas, sin barra final; por defecto ninguno). Permite los métodos `GET`, `POST`, `PATCH` y `DELETE` (el preflight `OPTIONS` lo gestiona el middleware) y los headers `Authorization` y `Content-Type`. No admite credenciales: el token viaja en el header, no en cookies.
 
+## Entornos
+
+`APP_ENV` es la bandera: `dev` (por defecto) o `production`. `build_settings` la lee de la variable de entorno, luego de `.env`, y carga los archivos `.env` y `.env.<APP_ENV>`. Prioridad, de menor a mayor: `.env`, `.env.<entorno>`, variables de entorno reales. Un valor distinto de `dev` o `production`, o un archivo cargado que diga otro entorno, impide arrancar.
+
+En `production` el modelo `Settings` rechaza, y lista todos a la vez: `DEBUG=true`, `CORS_ORIGINS` con `*` y un `DATABASE_URL` cuyo host sea `localhost`, `127.0.0.1` o `::1`. En `dev` no hay restricciones. La imagen Docker fija `APP_ENV=production`; `.env.*` no entra en la imagen (`.dockerignore`) y no se sube al repositorio (`.gitignore`), salvo las plantillas `*.example`.
+
 ## Configuración
 
 | Variable | Obligatoria | Regla |
 |---|---|---|
+| `APP_ENV` | No | `dev` o `production`. Por defecto `dev` |
 | `DATABASE_URL` | Sí | `postgres://` y `postgresql://` se convierten a `postgresql+asyncpg://` |
 | `JWT_SECRET` | Sí | Mínimo 32 caracteres. Sin valor por defecto |
 | `ADMIN_EMAIL` | Sí | Se guarda en minúsculas |
 | `ADMIN_PASSWORD` | Sí | Mínimo 12 caracteres. Sin valor por defecto |
+| `TRUSTED_PROXY_HOPS` | No | Proxies de confianza delante de la app, de 0 a 5. Por defecto 0; el `Dockerfile` lo fija en 1 |
 | `CORS_ORIGINS` | No | Orígenes separados por comas |
 
 Sin las tres variables de autenticación la aplicación no arranca. Los secretos son `SecretStr`: no aparecen al imprimir la configuración. Las variables `AUTH0_*`, `AUTH_MODE` y `LOCAL_JWT_SECRET` ya no existen; si siguen en el `.env`, se ignoran.
@@ -87,6 +96,28 @@ Sin las tres variables de autenticación la aplicación no arranca. Los secretos
 `SlidingWindowLimiter(limit, window)` permite como máximo `limit` eventos por clave en los últimos `window` segundos. `hit` comprueba y cuenta; `check` solo comprueba; `record` solo cuenta; `reset` borra una clave. Al superar el límite lanza `TooManyRequestsError(retry_after=...)`.
 
 Los contadores viven en memoria de cada proceso: con varios workers el límite efectivo es `limit` por worker. Las claves vencidas se descartan periódicamente para que la memoria no crezca. Lo usa el módulo `auth`.
+
+## IP del cliente detrás de un proxy
+
+`client_ip(request, trusted_hops)` devuelve la IP que sirve de clave para el límite de intentos. Cada proxy de confianza **añade al final** de `X-Forwarded-For` la IP de quien se le conectó:
+
+```
+X-Forwarded-For: <lo que escribió el cliente>, <IP real, añadida por el proxy>
+```
+
+Todo lo que está a la izquierda lo controla el cliente. Por eso se cuenta desde la derecha: con `trusted_hops=1` es el último elemento; con 2, el penúltimo.
+
+| Situación | Resultado |
+|---|---|
+| `trusted_hops=0` (por defecto) | Se ignora el header y se usa la IP de la conexión |
+| Header ausente, más corto que `trusted_hops`, o con una entrada que no es una IP | La IP de la conexión (nunca un valor del cliente) |
+| IPv6 | Se agrupa por bloque `/64`, para que rotar direcciones dentro del bloque no salte el límite |
+
+uvicorn se arranca con `--no-proxy-headers`: con `--forwarded-allow-ips='*'` tomaría el **primer** elemento del header, que escribe el cliente. Si hay otro proxy delante de Railway (un CDN, por ejemplo), sube `TRUSTED_PROXY_HOPS` a 2.
+
+## Errores de la base de datos
+
+El motor se crea con `hide_parameters=True`. Sin esa opción, SQLAlchemy incluye los valores de la consulta en el mensaje de sus errores: un INSERT fallido en `users` dejaría el email y el hash de la contraseña en los logs (y con `DEBUG=true`, también en el `echo` de cada consulta). Alembic usa la misma opción.
 
 ## Contratos base
 

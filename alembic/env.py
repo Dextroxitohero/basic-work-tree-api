@@ -18,7 +18,9 @@ def run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     # NullPool: una migración usa una sola conexión, no necesita pool.
-    engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
+    engine = create_async_engine(
+        get_settings().database_url, poolclass=NullPool, hide_parameters=True
+    )
     async with engine.connect() as connection:
         # Alembic es síncrono; run_sync hace de puente con el driver async.
         await connection.run_sync(run_migrations)

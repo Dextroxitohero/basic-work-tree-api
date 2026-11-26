@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core.config import get_settings
 from app.core.database import DbSession
 from app.modules.auth.exceptions import InsufficientPermissionsError, InvalidTokenError
 from app.modules.auth.guard import AuthGuard, get_auth_guard
@@ -26,7 +27,13 @@ def get_password_hasher() -> Argon2PasswordHasher:
 
 
 def get_auth_service(db: DbSession) -> AuthService:
-    return AuthService(UserRepository(db), get_password_hasher(), get_tokens())
+    return AuthService(
+        UserRepository(db),
+        get_password_hasher(),
+        get_tokens(),
+        # Nadie puede registrarse con el email del administrador sembrado.
+        reserved_emails=frozenset({get_settings().admin_email}),
+    )
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]

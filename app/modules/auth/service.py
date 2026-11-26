@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.core.pagination import Order, Page
@@ -8,11 +8,15 @@ from app.modules.auth.exceptions import (
     InvalidCredentialsError,
     InvalidTokenError,
     LastAdminError,
+    UserEmailExistsError,
     UserNotFoundError,
 )
 from app.modules.auth.models import User
 from app.modules.auth.permissions import ADMIN_PERMISSION, ALL_PERMISSIONS, DEFAULT_PERMISSIONS
 from app.modules.auth.ports import PasswordHasher, TokenIssuer, UserStore
+
+# Qué hizo ensure_admin. "conflict": el email de ADMIN_EMAIL pertenece a una cuenta normal.
+AdminStatus = Literal["created", "restored", "unchanged", "conflict"]
 
 
 @dataclass
@@ -31,18 +35,31 @@ def _is_admin(permissions: list[str], is_active: bool) -> bool:
 class AuthService:
     """Reglas de negocio de usuarios y sesiones. No conoce HTTP ni SQL."""
 
-    def __init__(self, users: UserStore, hasher: PasswordHasher, tokens: TokenIssuer) -> None:
+    def __init__(
+        self,
+        users: UserStore,
+        hasher: PasswordHasher,
+        tokens: TokenIssuer,
+        reserved_emails: frozenset[str] = frozenset(),
+    ) -> None:
         self._users = users
         self._hasher = hasher
         self._tokens = tokens
+        # Emails que nadie puede registrar por su cuenta (el del administrador sembrado).
+        self._reserved_emails = reserved_emails
 
     async def signup(self, *, full_name: str, email: str, password: str) -> Session:
         # Los permisos no son un parámetro: quien se registra solo siempre recibe lectura.
+        password_hash = await self._hasher.hash(password)
+        # Se comprueba DESPUÉS del hash para que tarde lo mismo que un email ya registrado, y
+        # se responde igual (409): no se puede distinguir cuál es el email del administrador.
+        if email.lower() in self._reserved_emails:
+            raise UserEmailExistsError()
         user = await self._users.save(
             User(
                 email=email.lower(),
                 full_name=full_name,
-                password_hash=await self._hasher.hash(password),
+                password_hash=password_hash,
                 is_active=True,
                 permissions=list(DEFAULT_PERMISSIONS),
             )
@@ -97,11 +114,16 @@ class AuthService:
             setattr(user, name, value)
         return await self._users.save(user)
 
-    async def ensure_admin(self, *, email: str, password: str) -> None:
+    async def ensure_admin(self, *, email: str, password: str) -> AdminStatus:
         """Crea el administrador si no existe; si existe, lo restaura. Es idempotente.
 
         Restaurar significa volver a activarlo y darle todos los permisos. La contraseña de
         un admin existente nunca se toca: es la que él eligió.
+
+        Solo se restaura una cuenta marcada como administrador sembrado. Si el email ya
+        pertenece a una cuenta normal, NO se promociona (devuelve "conflict"): alguien pudo
+        registrarlo antes de que existiera el administrador, y promocionarlo le regalaría
+        el control con la contraseña que él puso.
         """
         await self._users.lock_users()  # dos arranques simultáneos no lo crean dos veces
         user = await self._users.get_by_email(email.lower())
@@ -113,13 +135,18 @@ class AuthService:
                     password_hash=await self._hasher.hash(password),
                     is_active=True,
                     permissions=list(ALL_PERMISSIONS),
+                    is_seed_admin=True,
                 )
             )
-            return
-        if not user.is_active or set(user.permissions) != set(ALL_PERMISSIONS):
-            user.is_active = True
-            user.permissions = list(ALL_PERMISSIONS)
-            await self._users.save(user)
+            return "created"
+        if not user.is_seed_admin:
+            return "conflict"
+        if user.is_active and set(user.permissions) == set(ALL_PERMISSIONS):
+            return "unchanged"
+        user.is_active = True
+        user.permissions = list(ALL_PERMISSIONS)
+        await self._users.save(user)
+        return "restored"
 
     def _session(self, user: User) -> Session:
         access_token, expires_in = self._tokens.issue(user)

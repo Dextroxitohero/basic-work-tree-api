@@ -77,7 +77,7 @@ Usuarios, sesiones y permisos. Responde dos preguntas: quién eres (autenticaci�
 |---|---|
 | Email o contraseña incorrectos (mismo mensaje en ambos casos) | 401 `invalid_credentials` |
 | Token ausente, caducado, inválido, o de un usuario inexistente o desactivado | 401 `invalid_token` |
-| El email ya está registrado (sin distinguir mayúsculas) | 409 `user_email_exists` |
+| El email ya está registrado, o es el de `ADMIN_EMAIL` (sin distinguir mayúsculas) | 409 `user_email_exists` |
 | La cuenta está desactivada y la contraseña es correcta | 403 `account_disabled` |
 | Falta el permiso | 403 `insufficient_permissions` (con `details.required`) |
 | El usuario no existe | 404 `user_not_found` |
@@ -112,12 +112,18 @@ Un administrador es un usuario **activo** con `users:write`. El sistema siempre 
 
 | Situación | Resultado |
 |---|---|
-| No existe | Se crea, activo y con todos los permisos |
-| Existe y está sano | No se toca |
-| Existe pero está desactivado o le faltan permisos | Se reactiva y recupera todos los permisos |
+| No existe | Se crea (`created`), activo, con todos los permisos y marcado `is_seed_admin` |
+| Existe, es el sembrado y está sano | No se toca (`unchanged`) |
+| Existe, es el sembrado, pero está desactivado o le faltan permisos | Se reactiva y recupera todos los permisos (`restored`) |
 | Existe con otra contraseña | La contraseña **no** se modifica |
+| Existe una cuenta **normal** con ese email | **No se promociona** (`conflict`): se registra un error en el log y el arranque continúa |
 
 Es idempotente y nunca duplica: un lock evita que dos arranques simultáneos lo creen dos veces.
+
+**Protección contra la toma de la cuenta.** El registro es público, así que alguien podría registrar el email del administrador antes de que exista y esperar a que el arranque lo promocione con la contraseña que puso él. Dos defensas lo impiden:
+
+- `POST /auth/signup` rechaza `ADMIN_EMAIL` con el mismo 409 que cualquier email ya registrado. El hash se calcula antes de comprobarlo, para que tarde lo mismo y no delate cuál es el email del administrador.
+- `ensure_admin` solo restaura la cuenta marcada `is_seed_admin`, que es la que creó él mismo. Una cuenta normal con ese email nunca se promociona. El arranque no se detiene (sería una vía para tumbar la API registrando ese email): se escribe un error en el log. Para resolverlo, usa otro `ADMIN_EMAIL` o borra esa cuenta y reinicia.
 
 ## Límite de intentos
 
@@ -130,7 +136,9 @@ Contadores en memoria por proceso (ver [`core`](../../core/spec.md#límite-de-in
 | `/auth/signup` | IP | 10 por hora | 429 |
 | `/auth/signup` | email | 3 por hora | 429 |
 
-Un login correcto borra el contador de fallos de ese email. Los emails que no existen se limitan igual, así el 429 no revela si una cuenta existe. Detrás del proxy de Railway, uvicorn se arranca con `--proxy-headers` para que la IP sea la del cliente.
+Un login correcto borra el contador de fallos de ese email. Los emails que no existen se limitan igual, así el 429 no revela si una cuenta existe.
+
+**IP del cliente.** Detrás de un proxy, la IP de la conexión es la del proxy; la real viaja en `X-Forwarded-For`. Cada proxy de confianza añade la IP de quien se le conectó **al final** de ese header, y todo lo anterior lo escribe el cliente, que puede falsificarlo. Por eso se cuenta desde la derecha (ver [`core`](../../core/spec.md#ip-del-cliente-detrás-de-un-proxy)) con `TRUSTED_PROXY_HOPS` proxies de confianza: el `Dockerfile` lo fija en 1 (Railway). Sin esa variable (0, local) el header se ignora. uvicorn se arranca con `--no-proxy-headers` para que no reescriba la IP por su cuenta. Las direcciones IPv6 se agrupan por bloque `/64`.
 
 ## Tabla `users`
 
@@ -141,6 +149,7 @@ Un login correcto borra el contador de fallos de ese email. Los emails que no ex
 | `full_name` | `VARCHAR(120)` | |
 | `password_hash` | `TEXT` | NOT NULL |
 | `is_active` | `BOOLEAN` | NOT NULL, `true` |
+| `is_seed_admin` | `BOOLEAN` | NOT NULL, `false`. Solo el administrador creado por el arranque |
 | `permissions` | `TEXT[]` | NOT NULL, `{employees:read}` |
 | `created_at`, `updated_at` | `TIMESTAMPTZ` | NOT NULL |
 

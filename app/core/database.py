@@ -18,6 +18,9 @@ engine = create_async_engine(
     pool_recycle=settings.database_pool_recycle,  # renueva conexiones viejas
     pool_pre_ping=True,  # comprueba que la conexión siga viva antes de usarla
     echo=settings.debug,  # imprime el SQL solo en desarrollo
+    # Los errores de SQLAlchemy incluyen por defecto los valores de la consulta: un INSERT que
+    # falla en users dejaría el email y el hash de la contraseña en los logs.
+    hide_parameters=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(

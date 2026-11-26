@@ -3,6 +3,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 
+from app.core.client_ip import client_ip
+from app.core.config import get_settings
 from app.core.pagination import Order
 from app.core.responses import error_responses
 from app.core.schemas import Cursor, PageResponse, SearchTerm
@@ -29,9 +31,9 @@ users_router = APIRouter(prefix="/users", tags=["users"])
 can_manage_users = Depends(require_permission(USERS_WRITE))
 
 
-def client_ip(request: Request) -> str:
-    # Detrás del proxy de Railway uvicorn deja aquí la IP real (--proxy-headers).
-    return request.client.host if request.client else "unknown"
+def _ip(request: Request) -> str:
+    # Se lee la configuración en cada petición (está en caché): así los tests pueden cambiarla.
+    return client_ip(request, get_settings().trusted_proxy_hops)
 
 
 @router.post(
@@ -43,7 +45,7 @@ def client_ip(request: Request) -> str:
 async def signup(
     body: SignupRequest, request: Request, service: AuthServiceDep, guard: AuthGuardDep
 ):
-    guard.before_signup(ip=client_ip(request), email=body.email)
+    guard.before_signup(ip=_ip(request), email=body.email)
     # Los permisos no vienen del body: el servicio siempre asigna solo lectura.
     return await service.signup(
         full_name=body.full_name,
@@ -58,7 +60,7 @@ async def signup(
     responses=error_responses(403, 429),
 )
 async def login(body: LoginRequest, request: Request, service: AuthServiceDep, guard: AuthGuardDep):
-    guard.before_login(ip=client_ip(request), email=body.email)
+    guard.before_login(ip=_ip(request), email=body.email)
     try:
         session = await service.login(email=body.email, password=body.password.get_secret_value())
     except InvalidCredentialsError:

@@ -14,13 +14,15 @@ ROOT = Path(__file__).parent.parent
 
 # Debe ejecutarse ANTES de importar la app: database.py crea el engine al importarse.
 # Las variables de entorno tienen prioridad sobre el archivo .env.
-_test_url = os.environ.get("DATABASE_URL_TEST") or dotenv_values(ROOT / ".env").get(
-    "DATABASE_URL_TEST"
-)
+# La URL de tests puede estar en .env o en .env.dev (el entorno de desarrollo).
+_files = {**dotenv_values(ROOT / ".env"), **dotenv_values(ROOT / ".env.dev")}
+_test_url = os.environ.get("DATABASE_URL_TEST") or _files.get("DATABASE_URL_TEST")
 # Los tests vacían las tablas: esta comprobación evita borrar datos reales por error.
 if not _test_url or not _test_url.endswith("_test"):
     raise RuntimeError("DATABASE_URL_TEST debe apuntar a una base de datos terminada en _test")
 os.environ["DATABASE_URL"] = _test_url
+# Los tests siempre corren en dev, aunque el .env de esta máquina diga otra cosa.
+os.environ["APP_ENV"] = "dev"
 os.environ["JWT_SECRET"] = "secreto-solo-para-tests-" + "x" * 24
 os.environ["ADMIN_EMAIL"] = "Admin@Example.com"  # con mayúsculas: debe guardarse en minúsculas
 os.environ["ADMIN_PASSWORD"] = "contraseña-del-admin-123"

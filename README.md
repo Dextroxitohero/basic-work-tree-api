@@ -26,7 +26,10 @@ Necesitas Python 3.12 o superior (probado con 3.13) y Docker con Docker Compose.
 py -3.13 -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
+Copy-Item .env.dev.example .env.dev
 ```
+
+`.env` guarda la bandera `APP_ENV` y `.env.dev` la configuración de desarrollo. Ver [Entornos](#entornos-dev-y-production).
 
 **2. Configura el administrador y el secreto de los tokens**
 
@@ -36,7 +39,7 @@ Genera un secreto:
 .venv\Scripts\python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Rellena estas tres líneas del archivo `.env`. La app no arranca si falta alguna:
+Rellena estas tres líneas del archivo `.env.dev`. La app no arranca si falta alguna:
 
 ```env
 JWT_SECRET=el-secreto-generado
@@ -198,12 +201,37 @@ Todos los errores tienen la misma forma:
 {"error": "employee_not_found", "message": "El empleado no existe", "details": null}
 ```
 
+## Entornos (dev y production)
+
+Una sola bandera, `APP_ENV`, decide con qué configuración funciona la API. Hay dos valores: `dev` (el de por defecto) y `production`.
+
+| `APP_ENV` | Archivo que se carga | Plantilla | Para qué |
+|---|---|---|---|
+| `dev` | `.env` y luego `.env.dev` | `.env.dev.example` | Desarrollo local: base de datos de docker compose, front en `localhost` |
+| `production` | `.env` y luego `.env.production` | `.env.production.example` | Producción: base de datos de Railway, front desplegado |
+
+Para cambiar de entorno solo se cambia la bandera; cada archivo ya trae sus propios enlaces (`DATABASE_URL`, `CORS_ORIGINS`...):
+
+```env
+# .env
+APP_ENV=dev           # o production
+```
+
+Orden de prioridad, de menor a mayor: `.env`, `.env.<entorno>` y las **variables de entorno reales**. Por eso en Railway no hace falta ningún archivo: se definen las variables en el panel (con `APP_ENV=production`, que la imagen Docker ya fija). Ninguno de estos archivos se sube al repositorio, solo las plantillas `*.example`.
+
+**En `production` la app se niega a arrancar** si `DEBUG=true`, si `CORS_ORIGINS` contiene `*` o si `DATABASE_URL` apunta a una base de datos local. Si `APP_ENV` es otra cosa que `dev` o `production`, o si un archivo se contradice con la bandera (por ejemplo `.env.dev` con `APP_ENV=production`), tampoco arranca.
+
+Los tests siempre se ejecutan en `dev`, sea cual sea la bandera de tu máquina.
+
+> Si ya tenías un único `.env` con toda la configuración, sigue funcionando (el entorno por defecto es `dev`). Para adoptar el nuevo esquema, muévelo a `.env.dev` y deja en `.env` solo `APP_ENV=dev`.
+
 ## Configuración
 
-Variables del archivo `.env`, que no debe subirse al repositorio (ya está en `.gitignore`):
+Variables de configuración (en `.env`, `.env.dev`, `.env.production` o en el entorno). Los archivos con secretos no deben subirse al repositorio: ya están en `.gitignore`.
 
 | Variable | Obligatoria | Por defecto | Descripción |
 |---|---|---|---|
+| `APP_ENV` | No | `dev` | La bandera: `dev` o `production`. Ver [Entornos](#entornos-dev-y-production) |
 | `DATABASE_URL` | Sí | — | Conexión a PostgreSQL (`postgresql+asyncpg://...`) |
 | `DATABASE_URL_TEST` | Solo tests | — | Base de datos de tests; su nombre debe terminar en `_test` |
 | `JWT_SECRET` | Sí | — | Secreto que firma los tokens, mínimo 32 caracteres |
@@ -214,9 +242,10 @@ Variables del archivo `.env`, que no debe subirse al repositorio (ya está en `.
 | `DATABASE_POOL_TIMEOUT` | No | 30 | Segundos de espera por una conexión |
 | `DATABASE_POOL_RECYCLE` | No | 1800 | Segundos antes de renovar una conexión |
 | `DEBUG` | No | `false` | Muestra el SQL en consola |
+| `TRUSTED_PROXY_HOPS` | No | `0` (la imagen Docker usa `1`) | Proxies de confianza delante de la API; define de dónde sale la IP del cliente para el límite de intentos |
 | `CORS_ORIGINS` | No | ninguno | Orígenes del front permitidos, separados por comas (`http://localhost:5173,https://mi-front.com`) |
 
-Reinicia el servidor después de cambiar el `.env`.
+Reinicia el servidor después de cambiar cualquier archivo de configuración.
 
 ## Autenticación
 
@@ -235,7 +264,7 @@ La API tiene sus propios usuarios y emite sus propios tokens JWT (HS256, 12 hora
 - Quien se registra solo recibe lectura. Para darle más permisos, el administrador usa `PATCH /users/{id}`.
 - El sistema siempre conserva al menos un administrador activo (un usuario con `users:write`). Quitar ese permiso o desactivar al último da 409 `last_admin_required`.
 - Login y signup tienen límite de intentos: tras 5 contraseñas incorrectas para un email, ese email queda bloqueado 15 minutos (429, con `Retry-After`).
-- El administrador de `ADMIN_EMAIL` se crea al arrancar si no existe, y si existe se reactiva y recupera todos los permisos. Su contraseña no se modifica.
+- El administrador de `ADMIN_EMAIL` se crea al arrancar si no existe, y si existe se reactiva y recupera todos los permisos. Su contraseña no se modifica. Nadie puede registrarse con ese email, y una cuenta normal que ya lo tenga no se promociona: el arranque lo avisa en el log.
 
 Si olvidas la contraseña del administrador, borra su fila de la tabla `users` y reinicia la API: se crea de nuevo con `ADMIN_PASSWORD`.
 
@@ -288,11 +317,14 @@ Dentro de un módulo, una petición recorre `router` → `service` → `reposito
 | Síntoma | Solución |
 |---|---|
 | No conecta al puerto 5440 | `docker compose up -d --wait` |
-| `Field required` al arrancar | Falta una variable en `.env` |
+| `Field required` al arrancar | Falta una variable en el archivo del entorno (`.env.dev` o `.env.production`) o en el panel de Railway |
+| `Configuración no válida para production` | `DEBUG=true`, `CORS_ORIGINS` con `*` o `DATABASE_URL` local: corrígelo, o usa `APP_ENV=dev` |
+| `APP_ENV debe ser uno de ('dev', 'production')` | La bandera tiene otro valor |
 | La app no arranca y menciona `jwt_secret`, `admin_email` o `admin_password` | Falta esa variable en `.env`, o `JWT_SECRET` tiene menos de 32 caracteres o `ADMIN_PASSWORD` menos de 12 |
 | `relation "employees" does not exist` | `alembic upgrade head` |
 | 401 `invalid_token` | Token ausente, vencido, de un usuario desactivado o firmado con otro `JWT_SECRET` |
 | 401 `invalid_credentials` | Email o contraseña incorrectos |
 | 429 `too_many_requests` | Demasiados intentos; espera los segundos de `Retry-After` |
+| Log: `ADMIN_EMAIL (...) pertenece a una cuenta normal` | Esa cuenta no se promociona. Usa otro `ADMIN_EMAIL` o borra esa cuenta y reinicia |
 | 403 `insufficient_permissions` | Falta el permiso indicado en `details.required` |
 | Tildes mal mostradas en PowerShell 5.1 | Solo afecta a la consola; usa Swagger UI o PowerShell 7 |
